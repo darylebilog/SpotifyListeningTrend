@@ -1,0 +1,332 @@
+---
+title: "Spotify Listening Trend Analysis"
+author: "Daryle Bilog"
+date: "08 February 2025"
+output: 
+  html_document:
+    toc: true
+---
+# Intorudction
+> The user has been a Spotify subscriber since 2015, primarily relying on the platform for all music needs. Recently, the user discovered that Spotify allows users to request their historical listening data, which sparked an interest in exploring listening trends over time. After submitting a request, the user received their historical data within two days. This dataset forms the basis for the analysis, which combines both exploratory and predictive methods. The objective of the analysis is to examine the user's listening behavior throughout the years and to develop a predictive model that can forecast future listening trends and preferences on the platform.
+
+## Load required libraries
+> These libraries provide the tools needed for data processing (dplyr), visualization (ggplot2), time handling (lubridate), data reading (readr), forecasting (forecast), statistical analysis (rstantools), and machine learning (randomForest).
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(readr)
+library(forecast)
+library(scales)
+library(rstantools)
+library(randomForest)
+```
+
+## Merge Multiple CSV Files
+> Since Spotify provided multiple CSV files spanning different years, this step stores all file names in a list for easier processing.
+
+### Define Files
+```{r}
+file_names <- c(
+  "Streaming_History_Audio_2015-2018_0.csv",
+  "Streaming_History_Audio_2018-2019_1.csv",
+  "Streaming_History_Audio_2019-2021_2.csv",
+  "Streaming_History_Audio_2021-2022_3.csv",
+  "Streaming_History_Audio_2022-2023_4.csv",
+  "Streaming_History_Audio_2023-2024_5.csv",
+  "Streaming_History_Audio_2024-2025_6.csv"
+)
+```
+
+### Read and merge all files
+> The lapply() function iterates over the file list and reads each file into a dataframe, storing them in df_list. bind_rows() merges these dataframes into one.
+
+```{r}
+df_list <- lapply(file_names, read_csv)
+df <- bind_rows(df_list)
+```
+
+### Convert timestamps
+> Spotify provides timestamps in a single column. This step extracts key time components to facilitate temporal analysis.
+
+```{r}
+df <- df %>%
+  mutate(ts = ymd_hms(ts),
+         date = as.Date(ts),
+         hour = hour(ts),
+         day_of_week = wday(ts, label = TRUE),
+         duration_min = ms_played / 60000)  # Convert ms to minutes
+```
+
+## Listening Habits Analysis
+### Total Listening Time (Hours)
+> This is the summary of my listening habits throughout 2015 to 2024. I was expecting more total listening time but, in reality, I only have 0.56 years of listening hours. That is like a non-stop listening to Spotify music from January to about August.
+
+```{r}
+total_listening_hours <- sum(df$duration_min, na.rm = TRUE) / 60
+print(paste("Total Listening Time:", round(total_listening_hours, 2), "hours"))
+
+total_listening_days <- total_listening_hours/24
+print(paste("Total Listening Time in Days:", round(total_listening_days, 2), "days"))
+
+total_listening_years <- total_listening_days/365
+print(paste("Total Listening Time in Years:", round(total_listening_years, 2), "years"))
+```
+
+### Listening Patterns by Hour of Day
+> Plots a bar chart showing which hours the user listen the most, likely revealing peak usage periods.
+
+```{r}
+ggplot(df, aes(x = hour)) +
+  geom_bar(fill = "blue") +
+  labs(title = "Listening Patterns by Hour", x = "Hour of Day", y = "Play Count")
+```
+
+### Listening Patterns by Day of the Week
+> Shows which days of the week teh user listen the most, possibly indicating habits related to work or leisure.
+
+```{r}
+ggplot(df, aes(x = day_of_week)) +
+  geom_bar(fill = "blue") +
+  labs(title = "Listening Patterns by Day", x = "Day of the Week", y = "Play Count")
+```
+
+## Top Artists, Albums, and Tracks
+### Most Played Songs
+> Throughout the year, the user have listened to the song "Closer" by the Chainsmokers with a total of about 891 minutes. That is like listening to the song 14.85 hours non-stop.
+
+```{r}
+top_tracks <- df %>%
+  filter(!is.na(master_metadata_track_name)) %>%  # Remove NA values
+  group_by(master_metadata_track_name) %>%
+  summarize(total_played_in_min = sum(duration_min, na.rm = TRUE)) %>%
+  arrange(desc(total_played_in_min)) %>%
+  head(10)
+
+print(top_tracks)
+```
+
+### Most Played Artist
+> The Chainsmokers might have the top spot on the user's most listened song for the decade but Ed Sheeran holds the number 1 spot on the Most Played Artist. This just means that the user have listened to Ed Sheeran's multiple songs with a total of about 11,667 minutes or 194.45 hours or 8.1 days non-stop.
+
+```{r}
+top_artists <- df %>%
+  filter(!is.na(master_metadata_album_artist_name)) %>%  # Remove NA values
+  group_by(master_metadata_album_artist_name) %>%
+  summarize(total_played_in_min = sum(duration_min, na.rm = TRUE)) %>%
+  arrange(desc(total_played_in_min)) %>%
+  head(10)
+
+print(top_artists)
+```
+
+### Most Played Album
+> This dataframe shows the reason why the user has Ed Sheeran as their Most Played Artist. Three out of the ten Most Played Albums throughout the decade are from Ed Sheeran.
+
+```{r}
+top_albums <- df %>%
+  filter(!is.na(master_metadata_album_album_name)) %>%  # Remove NA values
+  group_by(master_metadata_album_album_name) %>%
+  summarize(total_played_in_min = sum(duration_min, na.rm = TRUE)) %>%
+  arrange(desc(total_played_in_min)) %>%
+  head(10)
+
+print(top_albums)
+```
+
+## Skipping Engagement Pattern
+### Skip Rate Analysis
+> The user has skipped a song for about 4.85% of the time. This might come from varying reasons.
+
+```{r}
+skip_rate <- sum(df$skipped, na.rm = TRUE) / nrow(df)
+print(paste("Skip Rate:", round(skip_rate * 100, 2), "%"))
+```
+
+### Average Time Before Skipping
+> It is interesting to see that the user listened to the song in an average of about 1.11 minutes before skipping them.
+
+```{r}
+avg_skip_time <- df %>%
+  filter(skipped == TRUE) %>%
+  summarize(avg_time = mean(duration_min, na.rm = TRUE))
+
+print(paste("Average Time Before Skipping:", round(avg_skip_time$avg_time, 2), "minutes"))
+```
+
+### Reasons for Stopping Playback
+> Most of the time, the user let the song to finish and wait for the next sing to start.
+
+```{r}
+ggplot(df, aes(x = reason_end)) +
+  geom_bar(fill = "red") +
+  labs(title = "Reasons for Stopping Playback", x = "Reason", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Audiobook Engagement
+### Audiobook Listening Pattern
+> The user has listened to only three audiobooks in the past decade. Notably, their top audiobook is "Start With Why" by Simon Sinek, which reflects their reading preferences. They tend to favor physical books over audiobooks. Hypothetically, for them, Spotify is primarily for music rather than audiobooks. This raises the question of whether an audiobook subscription is worth keeping or if a more affordable alternative would be a better option.
+
+```{r}
+audiobook_listening <- df %>%
+  filter(!is.na(audiobook_title)) %>%
+  group_by(audiobook_title) %>%
+  summarize(total_played = sum(duration_min, na.rm = TRUE)) %>%
+  arrange(desc(total_played))
+
+print(audiobook_listening)
+```
+
+## Track Transitions and Shuffle Analysis
+### Shuffle Analysis
+> Almost half of the time the user shuffles the music in Spotify.
+
+```{r}
+shuffle_usage <- df %>%
+  group_by(shuffle) %>%
+  summarize(count = n())
+
+print(shuffle_usage)
+```
+
+### Track Transitions (Next Track After Each Song)
+> This analysis provides the user with insight into the music they listen to back-to-back. Most of the time, when the song If You Believe by Patch Crowe plays, the next song is likely Good Day by Liahona Olayan. This pattern makes sense, as both songs come from the same Spotify channel, Strive To Be.
+
+```{r}
+df <- df %>%
+  arrange(ts) %>%
+  mutate(next_track = lead(master_metadata_track_name))
+
+track_transitions <- df %>%
+  filter(!is.na(master_metadata_track_name)) %>%  # Remove NA values
+  group_by(master_metadata_track_name, next_track) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count)) %>%
+  head(10)
+
+print(track_transitions)
+```
+
+## Predictive Analysis (Random Forrest Model)
+### Aggregate Data by Artist
+> Summarizes artist-level listening data.
+
+```{r}
+artist_data <- df %>%
+  group_by(master_metadata_album_artist_name) %>%
+  summarize(total_played = sum(duration_min, na.rm = TRUE),
+            avg_play_time = mean(duration_min, na.rm = TRUE),
+            count = n()) %>%
+  ungroup()
+```
+
+### Split Data for Training (70%) and Testing (30%)
+> Splitting the data to training and testing is a basic part of the data analysis and machine learning.
+
+```{r}
+set.seed(42)
+train_idx <- sample(1:nrow(artist_data), 0.7 * nrow(artist_data))
+train_data <- artist_data[train_idx, ]
+test_data <- artist_data[-train_idx, ]
+```
+
+### Train Random Forest Model to Predict Future Listening Time per Artist
+> Trains a machine learning model to predict future listening time based on past listening patterns.
+
+```{r}
+rf_model_artist <- randomForest(total_played ~ avg_play_time + count, data = train_data, ntree = 500)
+```
+
+### Predict on Test Data
+```{r}
+test_data$predicted_time <- predict(rf_model_artist, test_data)
+```
+
+### Evaluate Model Performance
+> The performance of the regression model is evaluated using two key metrics: RMSE (Root Mean Squared Error) and R-squared. The RMSE value of 42.9 indicates that, on average, the model's predictions deviate by 42.9 units from the actual values, providing insight into the magnitude of prediction errors. Meanwhile, the R-squared value of 0.97 demonstrates that the model explains 97% of the variance in the dependent variable, suggesting an excellent fit to the data. Together, these metrics highlight the model's high predictive accuracy and strong ability to capture the underlying patterns in the dataset.
+
+```{r}
+actual_values <- test_data$total_played
+predicted_values <- test_data$predicted_time
+squared_errors <- (actual_values - predicted_values)^2
+
+rmse <- sqrt(mean(squared_errors))
+r_squared <- 1 - (sum(squared_errors) / sum((actual_values - mean(actual_values))^2))
+
+print(paste("RMSE:", round(rmse, 2)))
+print(paste("R-squared:", round(r_squared, 2)))
+```
+
+### Predict Future Listening Time
+> The R code begins by determining the current year using `Sys.Date()` and extracting the year component with the `format()` function. It then creates a sequence of the next three years using the `current_year + 1` to `current_year + 3`. The `artist_data` dataset is expanded by repeating each row for the length of the `future_years` sequence, effectively duplicating the dataset for each of the next three years. The `mutate()` function is then used to add a new column, `year`, which assigns the corresponding future years to the duplicated rows. Next, the code uses the `predict()` function to generate predictions for the `predicted_time` column by applying a previously trained random forest model (`rf_model_artist`) to the `future_data`. This results in a dataset with predictions for the future years, allowing for forecasting based on the original artist data.
+
+```{r}
+current_year <- as.numeric(format(Sys.Date(), "%Y"))
+future_years <- (current_year + 1):(current_year + 3)
+
+future_data <- artist_data %>%
+  slice(rep(1:n(), each = length(future_years))) %>%
+  mutate(year = rep(future_years, times = nrow(artist_data)))
+
+future_data$predicted_time <- predict(rf_model_artist, newdata = future_data)
+```
+
+### Aggregate predicted listening time across all future years
+> In this R code, the `future_data` dataset is aggregated by grouping it by the `master_metadata_album_artist_name` column, which likely represents the name of the artist or album. The `na.omit()` function is used to remove any rows with missing values before the aggregation process. Then, for each artist or album, the `summarize()` function calculates the total predicted time (`total_predicted_time`) by summing the values in the `predicted_time` column, with any remaining missing values ignored using `na.rm = TRUE`. Finally, the dataset is sorted in descending order by the `total_predicted_time` using the `arrange()` function, allowing you to see which artists or albums have the highest total predicted time. This results in a table that ranks artists or albums based on their future predicted time.
+
+```{r}
+future_aggregated <- future_data %>%
+  group_by(master_metadata_album_artist_name) %>%
+  na.omit() %>% 
+  summarize(total_predicted_time = sum(predicted_time, na.rm = TRUE)) %>%
+  arrange(desc(total_predicted_time))
+```
+
+### View Top Predicted Artists
+> ### View Top Predicted Artists
+> This prediction is based on the model's historical data, specifically from the `test_data` set. It shows that, without incorporating the Random Forest model, the prediction indicates that the user will have Nashville Tribute Band as their top artist. This result reflects an estimate derived from the historical trends in the test dataset, and does not take into account the additional predictive insights provided by the Random Forest model. Essentially, it predicts the top artist based on past listening behavior, without accounting for potential future changes or external influences.
+
+```{r}
+predicted_top_artists <- test_data %>%
+  na.omit() %>% 
+  arrange(desc(predicted_time)) %>%
+  select(master_metadata_album_artist_name, predicted_time) %>%
+  head(10)
+
+print(predicted_top_artists)
+```
+### View Top Predicted Artists for Next Year
+> ### View Top Predicted Artists for Next Year
+> The predictions in the `future_data` are based on assumptions, such as maintaining the same average play time and play count as observed in the historical data. These predictions suggest that Ed Sheeran will continue to be the user's top artist for 2025, based on the trends observed in the past. It's important to note that these predictions are not meant to forecast the actual top artist for 2025, but rather provide an estimated continuation of past listening behavior, aggregated from the historical data. This approach assumes that patterns in the user's listening habits will remain consistent, but it does not account for potential changes in preferences or external factors.
+
+```{r}
+predicted_top_artists_next_year <- future_data %>%
+  filter(year == current_year + 1) %>%
+  na.omit() %>%  # Remove all rows with NA values
+  arrange(desc(predicted_time)) %>%
+  select(master_metadata_album_artist_name, predicted_time) %>%
+  head(10)
+
+print(predicted_top_artists_next_year)
+```
+
+### Visualization of Predicted Future Top Artists
+> Shows the predicted Future Top Artists of the user using the Random Forrest model.
+
+```{r}
+ggplot(future_aggregated %>% head(10), aes(
+  x = reorder(master_metadata_album_artist_name, total_predicted_time),
+  y = total_predicted_time
+)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  coord_flip() +
+  labs(
+    title = "Aggregated Predicted Future Listening Time by Artist",
+    x = "Artist",
+    y = "Total Predicted Listening Time (Minutes)"
+  ) +
+  theme_minimal()
+
+```

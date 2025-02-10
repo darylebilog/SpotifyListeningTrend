@@ -1,3 +1,5 @@
+![Spotify_Logo-png-RGB-Green-750x225.png](Spotify_Logo-png-RGB-Green-750x225.png)
+
 # Spotify Trend Analysis and Prediction
 
 <p align = "justify">
